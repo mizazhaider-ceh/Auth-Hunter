@@ -105,6 +105,57 @@ HELP_SECTIONS = [
     ('p', 'Auth endpoints rate-limit and lock accounts fast, so Threads is capped '
           'at 20 and a small Delay is on by default. If you see lockouts, drop to '
           'Threads 4 and Delay 0.5.'),
+    ('h', 'Full reference: every field and check box'),
+    ('o', 'TARGET'),
+    ('p', '• URL / Burp request file (radio): how you point at the target. URL = '
+          'type the address; Request file = replay a saved raw request.'),
+    ('p', '• Login URL (-u): the form action, the page the login POSTs to.'),
+    ('p', '• Method (POST or GET): how the form submits. Default POST.'),
+    ('p', '• Request file (--request): a raw HTTP request saved from Burp. Mark the '
+          'fields with §USER§ and §PASS§.'),
+    ('o', 'CREDENTIALS'),
+    ('p', '• Single user (-l): one username tried against every password.'),
+    ('p', '• User list (-L): a file of usernames, one per line.'),
+    ('p', '• Single password (-p): one password sprayed across all users.'),
+    ('p', '• Password list (-P): a password wordlist, one per line (e.g. rockyou.txt).'),
+    ('p', '• Combo list (--combo): one user:pass per line; used instead of -l/-L/-p/-P.'),
+    ('p', '• User field name (--user-param): the form field NAME for the username '
+          '(default username). Set only if the form differs, e.g. email.'),
+    ('p', '• Pass field name (--pass-param): the form field NAME for the password '
+          '(default password). Set only if the form differs, e.g. pwd.'),
+    ('p', '• Skip built-in common creds (--no-common) [check]: do not try the '
+          'built-in admin:admin / root:root list.'),
+    ('p', '• Try common creds only (--common-only) [check]: try ONLY that built-in '
+          'list. Fast first probe.'),
+    ('o', 'DETECTION'),
+    ('p', '• Method (dropdown): how a success is recognised. Auto = keyword scan + '
+          'baseline. Fail keyword = a word on a failed login. Success keyword = a '
+          'word only on success. Success/Fail status = an HTTP status code.'),
+    ('p', '• Value: the keyword or status code for the chosen method (e.g. Invalid, '
+          'Welcome, 302, 401).'),
+    ('p', '• Length tolerance: auto mode only. How many bytes a response may differ '
+          'from the baseline before it counts as a hit. Default 50.'),
+    ('p', '• Disable auto keyword scan (--no-auto-keywords) [check]: turn off the '
+          'built-in success/failure word scanner.'),
+    ('p', '• Test every combo (--all) [check]: do not stop at the first hit; try '
+          'every credential pair.'),
+    ('o', 'NETWORK & SESSION'),
+    ('p', '• Cookie: the full cookie string as name=value; carries your session.'),
+    ('p', '• Extra headers: one per line, "Key: Value" (e.g. X-Forwarded-For: '
+          '127.0.0.1).'),
+    ('p', '• Extra params: extra form fields sent on every request, one per line '
+          '(e.g. csrf_token=abc, submit=Login).'),
+    ('p', '• Threads (-t): parallel attempts. Default 8, hard cap 20. Lower to 4 if '
+          'you see lockouts.'),
+    ('p', '• Delay (-d): seconds between attempts per thread. Raise to 0.5 on '
+          'fragile or rate-limited logins.'),
+    ('p', '• Timeout: seconds before a request is given up.'),
+    ('p', '• Skip TLS certificate verification (--insecure) [check]: accept '
+          'self-signed lab certificates.'),
+    ('o', 'OUTPUT'),
+    ('p', '• Save hits to (-o): append cracked credentials to a file.'),
+    ('p', '• Verbose (-v) [check]: show every attempt, not only the cracked ones.'),
+    ('p', '• Limit (--limit): test only the first N combos (smoke test).'),
     ('h', 'Quick checklist'),
     ('p', '1. URL from the form action.'),
     ('p', '2. Field names only if the form is not username/password.'),
@@ -855,6 +906,8 @@ class App(tk.Tk):
         txt.tag_configure('p', foreground=p['FG'], font=('Segoe UI', 10), spacing3=4,
                           lmargin1=4, lmargin2=4)
         txt.tag_configure('c', foreground=p['ACCENT'], font=('Consolas', 10), lmargin1=16, lmargin2=16)
+        txt.tag_configure('o', foreground=p['ACCENT'], font=('Segoe UI Semibold', 10),
+                          spacing1=8, spacing3=2, lmargin1=4, lmargin2=4)
         for style, line in HELP_SECTIONS:
             txt.insert('end', line + '\n', style)
         txt.configure(state='disabled')
