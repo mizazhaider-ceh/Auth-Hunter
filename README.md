@@ -43,6 +43,7 @@ exam environments where you have permission to attack the target.
 - [⚙️ Install and requirements](#-install-and-requirements)
 - [🖥️ Graphical interface (GUI)](#-graphical-interface-gui)
 - [🚀 Quick start](#-quick-start)
+- [🧭 Finding the fields to attack](#-finding-the-fields-to-attack)
 - [🎯 The five usage scenarios](#-the-five-usage-scenarios)
 - [🔍 How detection works](#-how-detection-works)
 - [🚩 Every flag, explained](#-every-flag-explained)
@@ -184,6 +185,36 @@ Read that command top to bottom:
   people forget.
 - `--insecure` skips TLS certificate checks, which lab servers almost always
   need because they use self-signed certificates.
+
+---
+
+## 🧭 Finding the fields to attack
+
+Auth-Hunter needs the **names of the username and password fields**, and you
+read them from the login form's HTML. View Source on the login page (right-click,
+View Source, or press `F12`):
+
+```html
+<form method="POST" action="/login.php">
+    <input name="username" type="text">         <!-- --user-param username -->
+    <input name="password" type="password">     <!-- --pass-param password -->
+    <input type="submit" value="Log in">
+</form>
+```
+
+Read the form like a map:
+
+| What you see in the HTML       | What it gives the tool                |
+| ------------------------------ | ------------------------------------- |
+| `action="/login.php"`          | the `-u` URL                          |
+| `<input name="username">`      | `--user-param username` (the default) |
+| `<input name="password">`      | `--pass-param password` (the default) |
+
+The field names already default to `username` and `password`, so if the form
+uses those exact names you do not need `--user-param` / `--pass-param` at all.
+Set them only when the form differs, for example `<input name="email">` means
+`--user-param email`. The values you actually try come from `-l` / `-L` (the
+usernames) and `-p` / `-P` (the passwords).
 
 ---
 
