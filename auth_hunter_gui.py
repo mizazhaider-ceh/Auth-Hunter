@@ -6,6 +6,9 @@ re-implement the engine: it builds the exact auth_hunter.py command from the
 form and runs the real CLI as a subprocess, streaming its output live. Same
 engine as the command line, friendlier controls.
 
+Features: light / dark theme toggle, hover tooltips, a Help field guide, and a
+"Show request" preview that prints the raw HTTP request the tool will send.
+
 It always passes --no-color (clean text in the panel) and -y (so the CLI's
 interactive cookie prompt never blocks a windowed process). The cookie-safety
 confirmation is shown by the GUI instead, so the session cookie stays sacred.
@@ -20,6 +23,7 @@ import re
 import subprocess
 import sys
 import threading
+import urllib.parse
 
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, scrolledtext
@@ -27,18 +31,26 @@ from tkinter import ttk, filedialog, messagebox, scrolledtext
 HERE = os.path.dirname(os.path.abspath(__file__))
 CLI = os.path.join(HERE, 'auth_hunter.py')
 
-# ---- palette (dark theme) ----
-BG = '#0d111b'
-PANEL = '#161c2c'
-FIELD = '#0b0f18'
-ACCENT = '#36c5f0'
-GOOD = '#2ecc71'
-WARN = '#f1c40f'
-BAD = '#ff6b6b'
-FG = '#e6e9ef'
-MUTED = '#8a93a6'
 MONO = ('Consolas', 10)
 UI = ('Segoe UI', 10)
+
+# ---- two themes ----
+DARK = {
+    'BG': '#0d111b', 'PANEL': '#161c2c', 'FIELD': '#0b0f18', 'LOGBG': '#0a0e16',
+    'ACCENT': '#36c5f0', 'GOOD': '#2ecc71', 'WARN': '#f1c40f', 'BAD': '#ff6b6b',
+    'FG': '#e6e9ef', 'MUTED': '#8a93a6', 'BORDER': '#27314c',
+    'BTN': '#22304a', 'BTN_ACTIVE': '#2c3c5c', 'BTNFG': '#e6e9ef',
+    'WARNBG': '#2a1d0a', 'WARNFG': '#ffd479',
+    'RUN': '#2ecc71', 'RUNFG': '#06210f', 'STOP': '#5a2230', 'STOPFG': '#e6e9ef',
+}
+LIGHT = {
+    'BG': '#e7ecf3', 'PANEL': '#f5f7fb', 'FIELD': '#ffffff', 'LOGBG': '#ffffff',
+    'ACCENT': '#0b66c3', 'GOOD': '#1e8e4e', 'WARN': '#9a6a00', 'BAD': '#c0392b',
+    'FG': '#1b2430', 'MUTED': '#5a6577', 'BORDER': '#cbd5e3',
+    'BTN': '#e3e9f3', 'BTN_ACTIVE': '#d3dcec', 'BTNFG': '#1b2430',
+    'WARNBG': '#fff3d4', 'WARNFG': '#7a5600',
+    'RUN': '#2ecc71', 'RUNFG': '#06210f', 'STOP': '#e7c3c3', 'STOPFG': '#5a2230',
+}
 
 DETECT_OPTS = [
     'Auto (keywords + baseline)',
@@ -54,28 +66,53 @@ DETECT_FLAG = {
     'Fail status (--fail-status)': '--fail-status',
 }
 
-
-class ScrollFrame(ttk.Frame):
-    """A vertically scrollable frame. Put widgets in self.body."""
-
-    def __init__(self, master, **kw):
-        super().__init__(master, **kw)
-        self.canvas = tk.Canvas(self, bg=PANEL, highlightthickness=0, borderwidth=0)
-        vsb = ttk.Scrollbar(self, orient='vertical', command=self.canvas.yview)
-        self.canvas.configure(yscrollcommand=vsb.set)
-        vsb.pack(side='right', fill='y')
-        self.canvas.pack(side='left', fill='both', expand=True)
-        self.body = ttk.Frame(self.canvas)
-        self._win = self.canvas.create_window((0, 0), window=self.body, anchor='nw')
-        self.body.bind('<Configure>',
-                       lambda e: self.canvas.configure(scrollregion=self.canvas.bbox('all')))
-        self.canvas.bind('<Configure>',
-                         lambda e: self.canvas.itemconfigure(self._win, width=e.width))
-        self.canvas.bind('<Enter>', lambda e: self.canvas.bind_all('<MouseWheel>', self._wheel))
-        self.canvas.bind('<Leave>', lambda e: self.canvas.unbind_all('<MouseWheel>'))
-
-    def _wheel(self, e):
-        self.canvas.yview_scroll(int(-e.delta / 120), 'units')
+# Field guide shown by the Help button. Each item is (style, text).
+HELP_SECTIONS = [
+    ('h', 'What this window does'),
+    ('p', 'The GUI builds a real auth_hunter.py command from the fields on the '
+          'left and runs the actual tool, streaming its output on the right. The '
+          '"Command preview" box always shows exactly what is being run, and '
+          '"Show request" prints the raw HTTP request that will be sent.'),
+    ('h', 'Credentials: values vs field names'),
+    ('p', 'Two different ideas. The VALUES you try, and the form FIELD NAMES they '
+          'go into.'),
+    ('p', 'Values you try:  Single user (-l) or User list (-L), and Single '
+          'password (-p) or Password list (-P). A Combo list is one user:pass per '
+          'line. With no credentials, the built-in common list runs first.'),
+    ('p', 'Field names: read them from the login form HTML. View Source (F12) and '
+          'find the inputs:'),
+    ('c', '<form method="POST" action="/login.php">'),
+    ('c', '    <input name="username">   <-- User field name  (default: username)'),
+    ('c', '    <input name="password">   <-- Pass field name  (default: password)'),
+    ('c', '</form>'),
+    ('p', 'The names already default to username and password, so set "User field '
+          'name" / "Pass field name" only when the form differs, e.g. name="email" '
+          'means User field name = email.'),
+    ('h', 'What goes in the Cookie field'),
+    ('p', 'Paste the WHOLE cookie as name=value, not just the id. Correct:'),
+    ('c', 'PHPSESSID=8f3a9c2b7e1d4a6f0c5b'),
+    ('p', 'Wrong (value only):'),
+    ('c', '8f3a9c2b7e1d4a6f0c5b'),
+    ('p', 'Several allowed, separated by ;. From DevTools > Application > Cookies. '
+          'Sent verbatim on every request; the GUI shows it for confirmation first.'),
+    ('h', 'How a hit is decided'),
+    ('p', 'Pick a Detection method. "Fail keyword" is the most reliable: type the '
+          'word on a FAILED login (e.g. Invalid); any response WITHOUT that word is '
+          'a success. "Success keyword" is the opposite. The status options match '
+          'on HTTP status (302, 401). Leave it on Auto to let the tool scan and '
+          'baseline by itself.'),
+    ('h', 'Politeness'),
+    ('p', 'Auth endpoints rate-limit and lock accounts fast, so Threads is capped '
+          'at 20 and a small Delay is on by default. If you see lockouts, drop to '
+          'Threads 4 and Delay 0.5.'),
+    ('h', 'Quick checklist'),
+    ('p', '1. URL from the form action.'),
+    ('p', '2. Field names only if the form is not username/password.'),
+    ('p', '3. Usernames via -l/-L, passwords via -p/-P (or a Combo list).'),
+    ('p', '4. Detection = Fail keyword "Invalid" (or whatever the page says).'),
+    ('p', '5. Cookie = PHPSESSID=your-live-value if the login needs one.'),
+    ('p', '6. Tick Skip TLS verify for self-signed lab certificates.'),
+]
 
 
 class Tooltip:
@@ -106,110 +143,138 @@ class Tooltip:
             self.tip = None
 
 
-# Field guide shown by the Help button. Each item is (style, text).
-HELP_SECTIONS = [
-    ('h', 'What this window does'),
-    ('p', 'The GUI builds a real auth_hunter.py command from the fields on the '
-          'left and runs the actual tool, streaming its output on the right. The '
-          '"Command preview" box always shows exactly what is being run.'),
-    ('h', 'Credentials: values vs field names'),
-    ('p', 'There are two different ideas here. The VALUES you try, and the form '
-          'FIELD NAMES they go into.'),
-    ('p', 'Values you try:  Single user (-l) or User list (-L), and Single '
-          'password (-p) or Password list (-P). A Combo list is one user:pass per '
-          'line. If you give no credentials, the built-in common list runs first.'),
-    ('p', 'Field names: read them from the login form HTML. View Source (F12) on '
-          'the login page and find the inputs:'),
-    ('c', '<form method="POST" action="/login.php">'),
-    ('c', '    <input name="username">   <-- User field name  (default: username)'),
-    ('c', '    <input name="password">   <-- Pass field name  (default: password)'),
-    ('c', '</form>'),
-    ('p', 'The field names already default to username and password, so you only '
-          'set "User field name" / "Pass field name" when the form differs, for '
-          'example name="email" means User field name = email.'),
-    ('h', 'How a hit is decided'),
-    ('p', 'Pick a Detection method. "Fail keyword" is the most reliable: type the '
-          'word that appears on a FAILED login (for example Invalid), and any '
-          'response WITHOUT that word is treated as a success. "Success keyword" '
-          'is the opposite. The status options match on HTTP status (302, 401). '
-          'Leave it on Auto to let the tool keyword-scan and baseline by itself.'),
-    ('h', 'The session cookie is sacred'),
-    ('p', 'If the login needs a session, paste it into the Cookie field as '
-          'PHPSESSID=... (DevTools > Application > Cookies). It is sent verbatim '
-          'on every request. Before the first request the GUI shows it and asks '
-          'you to confirm. Never let it change mid-exam.'),
-    ('h', 'Politeness'),
-    ('p', 'Auth endpoints rate-limit and lock accounts fast, so Threads is capped '
-          'at 20 and a small Delay is on by default. If you see lockouts, drop to '
-          'Threads 4 and Delay 0.5.'),
-    ('h', 'Quick checklist'),
-    ('p', '1. URL from the form action.'),
-    ('p', '2. Field names only if the form is not username/password.'),
-    ('p', '3. Usernames via -l/-L, passwords via -p/-P (or a Combo list).'),
-    ('p', '4. Detection = Fail keyword "Invalid" (or whatever the page says).'),
-    ('p', '5. Cookie = your live PHPSESSID if the login needs one.'),
-    ('p', '6. Tick Skip TLS verify for self-signed lab certificates.'),
-]
+class ScrollFrame(ttk.Frame):
+    """A vertically scrollable frame. Put widgets in self.body."""
+
+    def __init__(self, master, bg, **kw):
+        super().__init__(master, **kw)
+        self.canvas = tk.Canvas(self, bg=bg, highlightthickness=0, borderwidth=0)
+        vsb = ttk.Scrollbar(self, orient='vertical', command=self.canvas.yview)
+        self.canvas.configure(yscrollcommand=vsb.set)
+        vsb.pack(side='right', fill='y')
+        self.canvas.pack(side='left', fill='both', expand=True)
+        self.body = ttk.Frame(self.canvas)
+        self._win = self.canvas.create_window((0, 0), window=self.body, anchor='nw')
+        self.body.bind('<Configure>',
+                       lambda e: self.canvas.configure(scrollregion=self.canvas.bbox('all')))
+        self.canvas.bind('<Configure>',
+                         lambda e: self.canvas.itemconfigure(self._win, width=e.width))
+        self.canvas.bind('<Enter>', lambda e: self.canvas.bind_all('<MouseWheel>', self._wheel))
+        self.canvas.bind('<Leave>', lambda e: self.canvas.unbind_all('<MouseWheel>'))
+
+    def _wheel(self, e):
+        self.canvas.yview_scroll(int(-e.delta / 120), 'units')
 
 
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title('Auth-Hunter - GUI')
-        self.geometry('1180x800')
-        self.minsize(960, 640)
-        self.configure(bg=BG)
+        self.geometry('1200x820')
+        self.minsize(980, 640)
+        self.is_dark = True
+        self.palette = dict(DARK)
         self.proc = None
         self.q = None
+        self._text_widgets = []
         self._build_style()
         self._build_header()
         self._build_body()
+        self._apply_theme()
         self.protocol('WM_DELETE_WINDOW', self._on_close)
 
-    # ---------- styling ----------
+    # ---------- theming ----------
     def _build_style(self):
+        p = self.palette
         st = ttk.Style(self)
         try:
             st.theme_use('clam')
         except tk.TclError:
             pass
-        st.configure('.', background=PANEL, foreground=FG, fieldbackground=FIELD, font=UI)
-        st.configure('TFrame', background=PANEL)
-        st.configure('TLabel', background=PANEL, foreground=FG)
-        st.configure('Hint.TLabel', background=PANEL, foreground=MUTED, font=('Segoe UI', 9))
-        st.configure('TCheckbutton', background=PANEL, foreground=FG)
-        st.map('TCheckbutton', background=[('active', PANEL)])
-        st.configure('TRadiobutton', background=PANEL, foreground=FG)
-        st.map('TRadiobutton', background=[('active', PANEL)])
-        st.configure('TButton', background='#22304a', foreground=FG, padding=6, borderwidth=0)
-        st.map('TButton', background=[('active', '#2c3c5c')])
-        st.configure('Run.TButton', background=GOOD, foreground='#06210f', font=('Segoe UI Semibold', 10))
-        st.map('Run.TButton', background=[('active', '#3fe089')])
-        st.configure('Stop.TButton', background='#5a2230', foreground=FG)
-        st.map('Stop.TButton', background=[('active', '#7a2c40')])
-        st.configure('TEntry', fieldbackground=FIELD, foreground=FG, insertcolor=FG)
-        st.configure('TCombobox', fieldbackground=FIELD, foreground=FG)
-        st.configure('TLabelframe', background=PANEL, bordercolor='#27314c')
-        st.configure('TLabelframe.Label', background=PANEL, foreground=ACCENT,
+        st.configure('.', background=p['PANEL'], foreground=p['FG'], fieldbackground=p['FIELD'], font=UI)
+        st.configure('TFrame', background=p['PANEL'])
+        st.configure('TLabel', background=p['PANEL'], foreground=p['FG'])
+        st.configure('Hint.TLabel', background=p['PANEL'], foreground=p['MUTED'], font=('Segoe UI', 9))
+        st.configure('TCheckbutton', background=p['PANEL'], foreground=p['FG'])
+        st.map('TCheckbutton', background=[('active', p['PANEL'])])
+        st.configure('TRadiobutton', background=p['PANEL'], foreground=p['FG'])
+        st.map('TRadiobutton', background=[('active', p['PANEL'])])
+        st.configure('TButton', background=p['BTN'], foreground=p['BTNFG'], padding=6, borderwidth=0)
+        st.map('TButton', background=[('active', p['BTN_ACTIVE'])])
+        st.configure('Run.TButton', background=p['RUN'], foreground=p['RUNFG'], font=('Segoe UI Semibold', 10))
+        st.map('Run.TButton', background=[('active', p['RUN'])])
+        st.configure('Stop.TButton', background=p['STOP'], foreground=p['STOPFG'])
+        st.map('Stop.TButton', background=[('active', p['STOP'])])
+        st.configure('TEntry', fieldbackground=p['FIELD'], foreground=p['FG'],
+                     insertcolor=p['FG'], bordercolor=p['BORDER'])
+        st.configure('TCombobox', fieldbackground=p['FIELD'], foreground=p['FG'], bordercolor=p['BORDER'])
+        st.configure('TLabelframe', background=p['PANEL'], bordercolor=p['BORDER'])
+        st.configure('TLabelframe.Label', background=p['PANEL'], foreground=p['ACCENT'],
                      font=('Segoe UI Semibold', 10))
-        st.configure('Vertical.TScrollbar', background='#22304a', troughcolor=PANEL, borderwidth=0)
+        st.configure('Vertical.TScrollbar', background=p['BTN'], troughcolor=p['PANEL'], borderwidth=0)
+        self.option_add('*TCombobox*Listbox.background', p['FIELD'])
+        self.option_add('*TCombobox*Listbox.foreground', p['FG'])
+        self.option_add('*TCombobox*Listbox.selectBackground', p['ACCENT'])
+
+    def _apply_theme(self):
+        self._build_style()
+        p = self.palette
+        self.configure(bg=p['BG'])
+        self._w_headerframe.configure(bg=p['BG'])
+        for w in self._w_headbits:
+            w.configure(bg=p['BG'])
+        self._w_title.configure(bg=p['BG'], fg=p['ACCENT'])
+        self._w_sub.configure(bg=p['BG'], fg=p['MUTED'])
+        self._w_warn.configure(bg=p['WARNBG'], fg=p['WARNFG'])
+        self._w_paned.configure(bg=p['BG'])
+        self._scroll.canvas.configure(bg=p['PANEL'])
+        for t in self._text_widgets:
+            t.configure(bg=p['FIELD'], fg=p['FG'], insertbackground=p['FG'])
+        self.log.configure(bg=p['LOGBG'], fg=p['FG'], insertbackground=p['FG'])
+        self._w_status.configure(bg=p['PANEL'], fg=p['ACCENT'])
+        self.log.tag_configure('good', foreground=p['GOOD'])
+        self.log.tag_configure('bad', foreground=p['BAD'])
+        self.log.tag_configure('warn', foreground=p['WARN'])
+        self.log.tag_configure('accent', foreground=p['ACCENT'])
+        self.log.tag_configure('cmd', foreground=p['ACCENT'])
+        self.log.tag_configure('muted', foreground=p['MUTED'])
+
+    def toggle_theme(self):
+        self.is_dark = not self.is_dark
+        self.palette = dict(DARK if self.is_dark else LIGHT)
+        self._apply_theme()
+        self.btn_theme.configure(text='☀ Light' if self.is_dark else '🌙 Dark')
 
     # ---------- header ----------
     def _build_header(self):
-        top = tk.Frame(self, bg=BG)
+        p = self.palette
+        top = tk.Frame(self, bg=p['BG'])
         top.pack(fill='x')
-        tk.Label(top, text='Auth-Hunter', bg=BG, fg=ACCENT,
-                 font=('Segoe UI Semibold', 18)).pack(anchor='w', padx=16, pady=(12, 0))
-        tk.Label(top, text='Exam-grade login brute forcer  -  graphical front-end',
-                 bg=BG, fg=MUTED, font=('Segoe UI', 10)).pack(anchor='w', padx=16)
-        warn = tk.Label(
+        self._w_headerframe = top
+        row = tk.Frame(top, bg=p['BG'])
+        row.pack(fill='x')
+        left = tk.Frame(row, bg=p['BG'])
+        left.pack(side='left', fill='x', expand=True)
+        self._w_title = tk.Label(left, text='🔓 Auth-Hunter', bg=p['BG'], fg=p['ACCENT'],
+                                 font=('Segoe UI Semibold', 18))
+        self._w_title.pack(anchor='w', padx=16, pady=(12, 0))
+        self._w_sub = tk.Label(left, text='Exam-grade login brute forcer  -  graphical front-end',
+                               bg=p['BG'], fg=p['MUTED'], font=('Segoe UI', 10))
+        self._w_sub.pack(anchor='w', padx=16)
+        rb = tk.Frame(row, bg=p['BG'])
+        rb.pack(side='right', padx=14, pady=12)
+        self.btn_theme = ttk.Button(rb, text='☀ Light', width=9, command=self.toggle_theme)
+        self.btn_theme.pack(side='left', padx=(0, 6))
+        ttk.Button(rb, text='❔ Help', width=8, command=self.on_help).pack(side='left')
+        self._w_headbits = [row, left, rb]
+        self._w_warn = tk.Label(
             top,
             text=('  Session cookie is sacred: never change your PHPSESSID and never switch '
                   'browser mid-exam. The cookie is sent verbatim, untouched, on every request.'),
-            bg='#2a1d0a', fg='#ffd479', font=('Segoe UI', 9), anchor='w', justify='left',
+            bg=p['WARNBG'], fg=p['WARNFG'], font=('Segoe UI', 9), anchor='w', justify='left',
             padx=10, pady=6,
         )
-        warn.pack(fill='x', padx=16, pady=(8, 10))
+        self._w_warn.pack(fill='x', padx=16, pady=(8, 10))
 
     # ---------- field helpers ----------
     def _e(self, frame, row, label, var, hint='', tip=''):
@@ -224,16 +289,21 @@ class App(tk.Tk):
             Tooltip(ent, tip)
         return ent
 
-    def _f(self, frame, row, label, var, hint='', save=False):
-        ttk.Label(frame, text=label).grid(row=row, column=0, sticky='w', padx=8, pady=4)
+    def _f(self, frame, row, label, var, hint='', save=False, tip=''):
+        lab = ttk.Label(frame, text=label)
+        lab.grid(row=row, column=0, sticky='w', padx=8, pady=4)
         box = ttk.Frame(frame)
         box.grid(row=row, column=1, sticky='ew', padx=8, pady=4)
         box.columnconfigure(0, weight=1)
-        ttk.Entry(box, textvariable=var).grid(row=0, column=0, sticky='ew')
+        ent = ttk.Entry(box, textvariable=var)
+        ent.grid(row=0, column=0, sticky='ew')
         ttk.Button(box, text='Browse', width=8,
                    command=lambda: self._browse(var, save)).grid(row=0, column=1, padx=(6, 0))
         if hint:
             ttk.Label(frame, text=hint, style='Hint.TLabel').grid(row=row, column=2, sticky='w', padx=4)
+        if tip:
+            Tooltip(lab, tip)
+            Tooltip(ent, tip)
 
     def _c(self, frame, row, text, var, hint='', tip=''):
         chk = ttk.Checkbutton(frame, text=text, variable=var)
@@ -248,13 +318,19 @@ class App(tk.Tk):
         ttk.Combobox(frame, textvariable=var, values=values, state='readonly').grid(
             row=row, column=1, sticky='ew', padx=8, pady=4)
 
+    def _note(self, frame, row, text):
+        ttk.Label(frame, text=text, style='Hint.TLabel', wraplength=560,
+                  justify='left').grid(row=row, column=1, columnspan=2, sticky='w', padx=8, pady=(0, 4))
+
     def _text(self, frame, row, label, height, hint=''):
         ttk.Label(frame, text=label).grid(row=row, column=0, sticky='nw', padx=8, pady=4)
-        t = tk.Text(frame, height=height, bg=FIELD, fg=FG, insertbackground=FG, font=MONO,
-                    wrap='none', borderwidth=1, relief='solid', highlightthickness=0)
+        t = tk.Text(frame, height=height, bg=self.palette['FIELD'], fg=self.palette['FG'],
+                    insertbackground=self.palette['FG'], font=MONO, wrap='none',
+                    borderwidth=1, relief='solid', highlightthickness=0)
         t.grid(row=row, column=1, sticky='ew', padx=8, pady=4)
         if hint:
             ttk.Label(frame, text=hint, style='Hint.TLabel').grid(row=row, column=2, sticky='nw', padx=4)
+        self._text_widgets.append(t)
         return t
 
     def _section(self, parent, title):
@@ -270,12 +346,13 @@ class App(tk.Tk):
 
     # ---------- body ----------
     def _build_body(self):
-        main = tk.PanedWindow(self, orient='horizontal', bg=BG, sashwidth=6, bd=0)
+        main = tk.PanedWindow(self, orient='horizontal', bg=self.palette['BG'], sashwidth=6, bd=0)
         main.pack(fill='both', expand=True, padx=12, pady=(0, 12))
+        self._w_paned = main
 
-        left = ScrollFrame(main)
-        main.add(left, minsize=400, width=600)
-        form = left.body
+        self._scroll = ScrollFrame(main, bg=self.palette['PANEL'])
+        main.add(self._scroll, minsize=400, width=620)
+        form = self._scroll.body
 
         right = ttk.Frame(main)
         main.add(right, minsize=380)
@@ -293,7 +370,9 @@ class App(tk.Tk):
         ttk.Radiobutton(tr, text='Burp request file', value='request',
                         variable=self.v_target).pack(side='left', padx=12)
         self.v_url = tk.StringVar()
-        self._e(lf, 1, 'Login URL', self.v_url, 'e.g. https://site/login.php')
+        self._e(lf, 1, 'Login URL', self.v_url, 'e.g. https://site/login.php',
+                tip='The form action, the page the login POSTs to. Read it from '
+                    '<form action="..."> in the page HTML.')
         self.v_method = tk.StringVar(value='POST')
         self._cb(lf, 2, 'Method', self.v_method, ['POST', 'GET'])
         self.v_reqfile = tk.StringVar()
@@ -303,27 +382,26 @@ class App(tk.Tk):
         lf = self._section(form, 'Credentials')
         self.v_user = tk.StringVar()
         self._e(lf, 0, 'Single user (-l)', self.v_user, 'e.g. admin',
-                tip='One username to try against every password. This is a VALUE you '
-                    'try, not the form field name. For a list of usernames use the '
-                    'User list (-L) row instead.')
+                tip='One username to try against every password. A VALUE you try, '
+                    'not the field name. For a list use User list (-L).')
         self.v_userfile = tk.StringVar()
         self._f(lf, 1, 'User list (-L)', self.v_userfile, 'one username per line')
         self.v_pass = tk.StringVar()
-        self._e(lf, 2, 'Single password (-p)', self.v_pass, 'spray one password')
+        self._e(lf, 2, 'Single password (-p)', self.v_pass, 'spray one password',
+                tip='One password tried for every user. For a wordlist use Password '
+                    'list (-P).')
         self.v_passfile = tk.StringVar()
         self._f(lf, 3, 'Password list (-P)', self.v_passfile, 'e.g. rockyou.txt')
         self.v_combo = tk.StringVar()
         self._f(lf, 4, 'Combo list (--combo)', self.v_combo, 'user:pass per line')
         self.v_userparam = tk.StringVar()
         self._e(lf, 5, 'User field name', self.v_userparam, 'default: username',
-                tip='The NAME of the username input in the login form HTML, e.g. '
-                    '<input name="username">. Leave blank unless the form uses a '
-                    'different name like email.')
+                tip='The NAME of the username input in the form HTML, e.g. '
+                    '<input name="username">. Leave blank unless it differs (e.g. email).')
         self.v_passparam = tk.StringVar()
         self._e(lf, 6, 'Pass field name', self.v_passparam, 'default: password',
-                tip='The NAME of the password input in the login form HTML, e.g. '
-                    '<input name="password">. Leave blank unless the form uses a '
-                    'different name like pwd.')
+                tip='The NAME of the password input in the form HTML, e.g. '
+                    '<input name="password">. Leave blank unless it differs (e.g. pwd).')
         self.v_nocommon = tk.BooleanVar()
         self._c(lf, 7, 'Skip built-in common creds (--no-common)', self.v_nocommon)
         self.v_commononly = tk.BooleanVar()
@@ -334,7 +412,7 @@ class App(tk.Tk):
         self.v_detect = tk.StringVar(value=DETECT_OPTS[0])
         self._cb(lf, 0, 'Method', self.v_detect, DETECT_OPTS)
         self.v_detectval = tk.StringVar()
-        self._e(lf, 1, 'Value', self.v_detectval, 'keyword or status code for the method above',
+        self._e(lf, 1, 'Value', self.v_detectval, 'keyword or status code for the method',
                 tip='Fill this when the method needs it. Fail keyword: the word on a '
                     'failed login, e.g. Invalid. Success keyword: a word only on '
                     'success, e.g. Welcome. Status methods: a number like 302 or 401.')
@@ -348,26 +426,30 @@ class App(tk.Tk):
         # ---- Network & Session ----
         lf = self._section(form, 'Network & Session')
         self.v_cookie = tk.StringVar()
-        self._e(lf, 0, 'Cookie', self.v_cookie, 'PHPSESSID=...  (sent verbatim)',
-                tip='Your live session, sent verbatim on every request. Get it from '
-                    'DevTools > Application > Cookies. Add it if the login needs a '
-                    'session. Never let it change mid-exam.')
-        self.t_headers = self._text(lf, 1, 'Extra headers', 3, 'one per line, "Key: Value"')
-        self.t_extra = self._text(lf, 2, 'Extra params', 3, 'one per line, "key=value"')
+        self._e(lf, 0, 'Cookie', self.v_cookie, 'paste the whole thing: PHPSESSID=abc123...',
+                tip='Paste name=value, e.g. PHPSESSID=8f3a9c... NOT just the id. '
+                    'Several allowed, separated by ;. From DevTools > Application > '
+                    'Cookies. Sent verbatim on every request.')
+        self._note(lf, 1, 'Paste as name=value, e.g.  PHPSESSID=8f3a9c2b...  (not just the id). '
+                          'Multiple allowed, separated by ;')
+        self.t_headers = self._text(lf, 2, 'Extra headers', 3, 'one per line, "Key: Value"')
+        self.t_extra = self._text(lf, 3, 'Extra params', 3, 'one per line, "key=value"')
         self.v_threads = tk.StringVar(value='8')
-        self._e(lf, 3, 'Threads (-t)', self.v_threads, 'default 8, hard cap 20',
+        self._e(lf, 4, 'Threads (-t)', self.v_threads, 'default 8, hard cap 20',
                 tip='Parallel attempts. Capped at 20 because auth endpoints rate-limit '
                     'and lock accounts fast. Drop to 4 if you see lockouts.')
         self.v_delay = tk.StringVar(value='0.1')
-        self._e(lf, 4, 'Delay (-d)', self.v_delay, 'seconds between requests per thread',
+        self._e(lf, 5, 'Delay (-d)', self.v_delay, 'seconds between requests per thread',
                 tip='Pause between attempts per thread. Raise to 0.5 on fragile or '
                     'strictly rate-limited logins.')
         self.v_timeout = tk.StringVar(value='10')
-        self._e(lf, 5, 'Timeout', self.v_timeout, 'per request, seconds',
+        self._e(lf, 6, 'Timeout', self.v_timeout, 'per request, seconds',
                 tip='Give up on a request after this many seconds. Raise it if the '
                     'server is slow so attempts do not time out as errors.')
         self.v_insecure = tk.BooleanVar()
-        self._c(lf, 6, 'Skip TLS certificate verification (--insecure)', self.v_insecure)
+        self._c(lf, 7, 'Skip TLS certificate verification (--insecure)', self.v_insecure,
+                tip='Lab and exam servers use self-signed certificates. Tick this or '
+                    'every request fails with a TLS error.')
 
         # ---- Output ----
         lf = self._section(form, 'Output')
@@ -378,8 +460,7 @@ class App(tk.Tk):
         self.v_limit = tk.StringVar()
         self._e(lf, 2, 'Limit (--limit)', self.v_limit, 'test only the first N combos')
 
-        spacer = ttk.Frame(form)
-        spacer.pack(pady=8)
+        ttk.Frame(form).pack(pady=8)
 
     def _build_right(self, rc):
         cmdf = ttk.Frame(rc)
@@ -400,25 +481,29 @@ class App(tk.Tk):
                                    command=self.on_stop, state='disabled')
         self.btn_stop.pack(side='left', padx=6)
         ttk.Button(btns, text='Preview', command=self.on_preview).pack(side='left')
-        ttk.Button(btns, text='Clear log', command=self._clear_log).pack(side='left', padx=6)
-        ttk.Button(btns, text='❔ Help', command=self.on_help).pack(side='right')
+        ttk.Button(btns, text='📡 Show request', command=self.on_request).pack(side='left', padx=6)
+        ttk.Button(btns, text='Clear log', command=self._clear_log).pack(side='left')
 
         self.log = scrolledtext.ScrolledText(
-            rc, bg='#0a0e16', fg=FG, insertbackground=FG, font=MONO, wrap='word',
-            state='disabled', borderwidth=0, highlightthickness=0)
+            rc, bg=self.palette['LOGBG'], fg=self.palette['FG'], insertbackground=self.palette['FG'],
+            font=MONO, wrap='word', state='disabled', borderwidth=0, highlightthickness=0)
         self.log.pack(fill='both', expand=True, padx=8, pady=4)
-        self.log.tag_configure('good', foreground=GOOD)
-        self.log.tag_configure('bad', foreground=BAD)
-        self.log.tag_configure('warn', foreground=WARN)
-        self.log.tag_configure('accent', foreground=ACCENT)
-        self.log.tag_configure('cmd', foreground='#9bdcff')
-        self.log.tag_configure('muted', foreground=MUTED)
 
         self.status_var = tk.StringVar(value='Idle.')
-        tk.Label(rc, textvariable=self.status_var, bg=PANEL, fg=ACCENT, font=MONO,
-                 anchor='w').pack(fill='x', padx=8, pady=(0, 8))
+        self._w_status = tk.Label(rc, textvariable=self.status_var, bg=self.palette['PANEL'],
+                                  fg=self.palette['ACCENT'], font=MONO, anchor='w')
+        self._w_status.pack(fill='x', padx=8, pady=(0, 8))
 
     # ---------- command building ----------
+    def _extra_params(self):
+        out = []
+        for ln in self.t_extra.get('1.0', 'end').splitlines():
+            ln = ln.strip()
+            if ln and '=' in ln:
+                k, _, v = ln.partition('=')
+                out.append((k, v))
+        return out
+
     def build_command(self):
         a = [sys.executable, CLI]
         if self.v_target.get() == 'request':
@@ -503,6 +588,95 @@ class App(tk.Tk):
             else:
                 parts.append(x)
         return ' '.join(parts)
+
+    # ---------- example raw request ----------
+    def _example_request(self):
+        if self.v_target.get() == 'request':
+            rf = self.v_reqfile.get().strip()
+            if not rf:
+                return 'Pick a request file first (Target = Burp request file).'
+            try:
+                with open(rf, 'r', encoding='utf-8', errors='replace') as f:
+                    content = f.read()
+            except OSError as e:
+                return 'Cannot read request file: %s' % e
+            shown = content.replace('§USER§', 'admin').replace('§PASS§', 'Password1')
+            shown = shown.replace('FUZZUSER', 'admin').replace('FUZZPASS', 'Password1')
+            return ('# Your request file is sent as-is, with the markers replaced by\n'
+                    '# each credential pair. One request per attempt. Sample shown: admin / Password1\n'
+                    '# ----------------------------------------------------------------\n\n%s' % shown)
+
+        url = self.v_url.get().strip()
+        if not url:
+            return 'Enter the Login URL first.'
+        method = self.v_method.get()
+        user = self.v_user.get().strip() or 'admin'
+        pwd = self.v_pass.get().strip() or 'Password1'
+        uf = self.v_userparam.get().strip() or 'username'
+        pf = self.v_passparam.get().strip() or 'password'
+        parsed = urllib.parse.urlparse(url)
+        host = parsed.hostname or '(host)'
+        if parsed.port:
+            host = '%s:%d' % (host, parsed.port)
+        path = parsed.path or '/'
+        query = parsed.query
+
+        pairs = list(self._extra_params()) + [(uf, user), (pf, pwd)]
+        encoded = urllib.parse.urlencode(pairs)
+        if method == 'GET':
+            sep = '&' if query else '?'
+            full = path + (('?' + query) if query else '') + sep + encoded
+            body = ''
+        else:
+            full = path + (('?' + query) if query else '')
+            body = encoded
+
+        headers = [('Host', host), ('User-Agent', 'Mozilla/5.0 (Auth-Hunter/1.0)'),
+                   ('Accept', '*/*'), ('Connection', 'keep-alive')]
+        if self.v_cookie.get().strip():
+            headers.append(('Cookie', self.v_cookie.get().strip()))
+        for ln in self.t_headers.get('1.0', 'end').splitlines():
+            ln = ln.strip()
+            if ln and ':' in ln:
+                k, _, v = ln.partition(':')
+                headers.append((k.strip(), v.strip()))
+        if method == 'POST':
+            headers.append(('Content-Type', 'application/x-www-form-urlencoded'))
+            headers.append(('Content-Length', str(len(body.encode('utf-8')))))
+
+        out = ['# Example of ONE attempt the tool sends (sample creds: %s / %s).' % (user, pwd),
+               '# The real run sends one like this per credential pair.',
+               '# ----------------------------------------------------------------', '']
+        out.append('%s %s HTTP/1.1' % (method, full))
+        for k, v in headers:
+            out.append('%s: %s' % (k, v))
+        out.append('')
+        out.append(body)
+        return '\n'.join(out)
+
+    def on_request(self):
+        self._popup_text('Example HTTP request', self._example_request())
+
+    def _popup_text(self, title, text):
+        p = self.palette
+        win = tk.Toplevel(self)
+        win.title(title)
+        win.configure(bg=p['BG'])
+        win.geometry('780x600')
+        win.transient(self)
+        tk.Label(win, text=title, bg=p['BG'], fg=p['ACCENT'],
+                 font=('Segoe UI Semibold', 14)).pack(anchor='w', padx=16, pady=(12, 6))
+        box = scrolledtext.ScrolledText(win, bg=p['LOGBG'], fg=p['FG'], insertbackground=p['FG'],
+                                        font=MONO, wrap='none', borderwidth=0,
+                                        highlightthickness=0, padx=12, pady=10)
+        box.pack(fill='both', expand=True, padx=12, pady=(0, 8))
+        box.insert('end', text)
+        box.configure(state='disabled')
+        bar = tk.Frame(win, bg=p['BG'])
+        bar.pack(fill='x', pady=(0, 12))
+        ttk.Button(bar, text='Copy', command=lambda: (self.clipboard_clear(),
+                   self.clipboard_append(text))).pack(side='left', padx=16)
+        ttk.Button(bar, text='Close', command=win.destroy).pack(side='right', padx=16)
 
     # ---------- actions ----------
     def on_preview(self):
@@ -661,25 +835,26 @@ class App(tk.Tk):
         self.status_var.set('Command copied to clipboard.')
 
     def on_help(self):
+        p = self.palette
         win = tk.Toplevel(self)
         win.title('Auth-Hunter - Help & Field Guide')
-        win.configure(bg=BG)
-        win.geometry('740x660')
+        win.configure(bg=p['BG'])
+        win.geometry('760x680')
         win.transient(self)
-        tk.Label(win, text='Auth-Hunter  ·  Field Guide', bg=BG, fg=ACCENT,
+        tk.Label(win, text='Auth-Hunter  ·  Field Guide', bg=p['BG'], fg=p['ACCENT'],
                  font=('Segoe UI Semibold', 15)).pack(anchor='w', padx=16, pady=(14, 2))
         tk.Label(win, text='Hover any field in the main window for a quick tip. '
                            'This guide is the long version.',
-                 bg=BG, fg=MUTED, font=('Segoe UI', 9)).pack(anchor='w', padx=16, pady=(0, 8))
-        txt = scrolledtext.ScrolledText(win, bg='#0a0e16', fg=FG, insertbackground=FG,
+                 bg=p['BG'], fg=p['MUTED'], font=('Segoe UI', 9)).pack(anchor='w', padx=16, pady=(0, 8))
+        txt = scrolledtext.ScrolledText(win, bg=p['LOGBG'], fg=p['FG'], insertbackground=p['FG'],
                                         font=('Segoe UI', 10), wrap='word', borderwidth=0,
                                         highlightthickness=0, padx=14, pady=10)
         txt.pack(fill='both', expand=True, padx=12, pady=(0, 10))
-        txt.tag_configure('h', foreground=ACCENT, font=('Segoe UI Semibold', 12),
+        txt.tag_configure('h', foreground=p['ACCENT'], font=('Segoe UI Semibold', 12),
                           spacing1=12, spacing3=4)
-        txt.tag_configure('p', foreground=FG, font=('Segoe UI', 10), spacing3=4,
+        txt.tag_configure('p', foreground=p['FG'], font=('Segoe UI', 10), spacing3=4,
                           lmargin1=4, lmargin2=4)
-        txt.tag_configure('c', foreground='#9bdcff', font=('Consolas', 10), lmargin1=16, lmargin2=16)
+        txt.tag_configure('c', foreground=p['ACCENT'], font=('Consolas', 10), lmargin1=16, lmargin2=16)
         for style, line in HELP_SECTIONS:
             txt.insert('end', line + '\n', style)
         txt.configure(state='disabled')
@@ -705,6 +880,9 @@ def main():
     app = App()
     if selftest:
         app.withdraw()
+        app.update_idletasks()
+        app.update()
+        app.toggle_theme()   # exercise light theme
         app.update_idletasks()
         app.update()
         print('selftest OK')
