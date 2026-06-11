@@ -1,6 +1,29 @@
-# Auth-Hunter
+<div align="center">
 
-**Exam-grade login brute forcer. Single file. Standard library only. No installation.**
+# 🔓 Auth-Hunter
+
+### Exam-grade login brute forcer. Single file. Zero dependencies.
+
+*Built to replace Hydra for web login forms when the exam clock is running.*
+
+<br>
+
+![Python](https://img.shields.io/badge/Python-3.7%2B-3776AB?style=for-the-badge&logo=python&logoColor=white)
+![Dependencies](https://img.shields.io/badge/Dependencies-NONE-2ECC71?style=for-the-badge)
+![GUI](https://img.shields.io/badge/GUI-tkinter-9B59B6?style=for-the-badge&logo=windowsterminal&logoColor=white)
+![Platform](https://img.shields.io/badge/Windows%20%7C%20Linux%20%7C%20Kali-1F6FEB?style=for-the-badge)
+![License](https://img.shields.io/badge/License-MIT-F1C40F?style=for-the-badge)
+![Authorized use only](https://img.shields.io/badge/Authorized%20use-ONLY-E74C3C?style=for-the-badge)
+
+```text
+╔══════════════════════════════════════════════════════╗
+║         Auth Hunter - Exam-Grade Brute Forcer        ║
+║   Threaded | Burp-aware | Combo lists | Auto-detect  ║
+║          stdlib only · no DoS · polite               ║
+╚══════════════════════════════════════════════════════╝
+```
+
+</div>
 
 Auth-Hunter is a threaded HTTP login brute forcer built to replace Hydra for
 simple web login forms under exam pressure. It is one Python file with zero
@@ -11,36 +34,28 @@ five minutes before the clock starts.
 It is built for **authorized** testing only: web pentesting labs, CTFs, and
 exam environments where you have permission to attack the target.
 
-```
-╔══════════════════════════════════════════════════════╗
-║         Auth Hunter - Exam-Grade Brute Forcer        ║
-║   Threaded | Burp-aware | Combo lists | Auto-detect  ║
-║          stdlib only · no DoS · polite               ║
-╚══════════════════════════════════════════════════════╝
-```
+---
+
+## 📖 Table of contents
+
+- [💡 Why this tool exists](#-why-this-tool-exists)
+- [🍪 The session cookie warning (read this first)](#-the-session-cookie-warning-read-this-first)
+- [⚙️ Install and requirements](#-install-and-requirements)
+- [🖥️ Graphical interface (GUI)](#-graphical-interface-gui)
+- [🚀 Quick start](#-quick-start)
+- [🎯 The five usage scenarios](#-the-five-usage-scenarios)
+- [🔍 How detection works](#-how-detection-works)
+- [🚩 Every flag, explained](#-every-flag-explained)
+- [🍪 Cookies and sessions in detail](#-cookies-and-sessions-in-detail)
+- [📨 Using a Burp request file](#-using-a-burp-request-file)
+- [📤 Output and exit codes](#-output-and-exit-codes)
+- [🛡️ Politeness and safety caps](#-politeness-and-safety-caps)
+- [🩹 Troubleshooting](#-troubleshooting)
+- [👤 Author](#-author)
 
 ---
 
-## Table of contents
-
-- [Why this tool exists](#why-this-tool-exists)
-- [The session cookie warning (read this first)](#the-session-cookie-warning-read-this-first)
-- [Install and requirements](#install-and-requirements)
-- [Graphical interface (GUI)](#graphical-interface-gui)
-- [Quick start](#quick-start)
-- [The five usage scenarios](#the-five-usage-scenarios)
-- [How detection works](#how-detection-works)
-- [Every flag, explained](#every-flag-explained)
-- [Cookies and sessions in detail](#cookies-and-sessions-in-detail)
-- [Using a Burp request file](#using-a-burp-request-file)
-- [Output and exit codes](#output-and-exit-codes)
-- [Politeness and safety caps](#politeness-and-safety-caps)
-- [Troubleshooting](#troubleshooting)
-- [Author](#author)
-
----
-
-## Why this tool exists
+## 💡 Why this tool exists
 
 In an exam you do not have time to fight your tools. Hydra is great, but it
 needs the right module, the right form-string syntax, and it gets unhappy with
@@ -66,7 +81,7 @@ Auth-Hunter solves the few things that actually matter in a web login exam:
 
 ---
 
-## The session cookie warning (read this first)
+## 🍪 The session cookie warning (read this first)
 
 This is written in bold because students lose marks over it every single year.
 
@@ -93,7 +108,7 @@ it. Nothing has been sent yet.
 
 ---
 
-## Install and requirements
+## ⚙️ Install and requirements
 
 - **Python 3.7 or newer.** That is the only requirement.
 - No third-party packages. Everything used (`http.client`, `ssl`, `argparse`,
@@ -109,7 +124,7 @@ On Windows use `python`, on most Linux boxes use `python3`. Both work.
 
 ---
 
-## Graphical interface (GUI)
+## 🖥️ Graphical interface (GUI)
 
 If you prefer clicking over typing, there is a full graphical front-end:
 `auth_hunter_gui.py`. It is also pure standard library (Python's built-in
@@ -144,7 +159,7 @@ exactly what you selected.
 
 ---
 
-## Quick start
+## 🚀 Quick start
 
 ```bash
 # Single known user, brute the password, stop on first hit,
@@ -172,7 +187,7 @@ Read that command top to bottom:
 
 ---
 
-## The five usage scenarios
+## 🎯 The five usage scenarios
 
 These are the five shapes nearly every login attack takes. Pick the one that
 matches what you know.
@@ -228,7 +243,7 @@ python auth_hunter.py -u URL --common-only --fail "Invalid"
 
 ---
 
-## How detection works
+## 🔍 How detection works
 
 The single hardest part of brute forcing a login is knowing when you have won.
 Auth-Hunter checks for success in a strict priority order. Whatever you specify
@@ -271,7 +286,7 @@ flag at all and it will just find the win.
 
 ---
 
-## Every flag, explained
+## 🚩 Every flag, explained
 
 ### Target (use `-u` OR `--request`)
 
@@ -345,7 +360,7 @@ repeat.
 
 ---
 
-## Cookies and sessions in detail
+## 🍪 Cookies and sessions in detail
 
 There are two ways to attach a session, and they cover every situation:
 
@@ -370,7 +385,7 @@ nothing sent. Pass `-y` to skip this prompt once you trust the value.
 
 ---
 
-## Using a Burp request file
+## 📨 Using a Burp request file
 
 This is the most reliable mode for any login with a CSRF token or unusual
 fields. Capture the login request in Burp, copy it to a file, and replace the
@@ -407,7 +422,7 @@ Notes that save time:
 
 ---
 
-## Output and exit codes
+## 📤 Output and exit codes
 
 A cracked credential is printed in green with the status code, response length,
 and the exact reason it was flagged a win, so you can trust the result rather
@@ -427,7 +442,7 @@ On Ctrl-C the run stops cleanly and prints whatever it found so far.
 
 ---
 
-## Politeness and safety caps
+## 🛡️ Politeness and safety caps
 
 Auth-Hunter is deliberately not a denial-of-service tool.
 
@@ -443,7 +458,7 @@ it run slower and safer.
 
 ---
 
-## Troubleshooting
+## 🩹 Troubleshooting
 
 **Everything reports as a hit, or nothing does.** Your detection method is off.
 Prefer `--fail "Invalid"` with the exact failure word from the real page. View
@@ -468,7 +483,7 @@ Lower threads and higher delay are gentler; the reverse is faster but riskier.
 
 ---
 
-## Author
+## 👤 Author
 
 Built by **Muhammad Izaz Haider**, Student of CyberSecurity at Howest, lover of
 AI and offensive security.
@@ -485,3 +500,16 @@ Auth-Hunter is for **authorized** security testing only: your own systems,
 explicit-permission engagements, CTFs, and exam labs where attacking the target
 is the point. Brute forcing a login you do not have permission to test is
 illegal in most countries. You are responsible for how you use it.
+
+---
+
+<div align="center">
+
+### ⭐ If Auth-Hunter helped you, drop a star and share it with your class.
+
+**Made with care for students, by a student.**
+
+![Built by Muhammad Izaz Haider](https://img.shields.io/badge/Built%20by-Muhammad%20Izaz%20Haider-36C5F0?style=for-the-badge)
+![AI x Offensive Security](https://img.shields.io/badge/AI%20x%20Offensive%20Security-9B59B6?style=for-the-badge)
+
+</div>
